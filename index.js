@@ -6,12 +6,48 @@ const express = require('express');
 const qrcode = require('qrcode-terminal');
 const QRCodeImage = require('qrcode');
 
-// --- SERVIDOR KEEP-ALIVE (Para Render/UptimeRobot) ---
+// --- SERVIDOR WEB (Para exibir QR Code e Manter Acordado) ---
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.send('🤖 O Robô está acordado e operando! Tudo certo por aqui.');
+let currentQR = null; // Variável para guardar o QR Code atual
+let isConnected = false; // Variável para saber se já conectou
+
+app.get('/', async (req, res) => {
+    if (isConnected) {
+        res.send(`
+            <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+                <h1 style="color: green;">✅ Robô Conectado!</h1>
+                <p>O WhatsApp está ativo e monitorando.</p>
+            </div>
+        `);
+    } else if (currentQR) {
+        // Gera a imagem do QR Code para exibir no navegador
+        const url = await QRCodeImage.toDataURL(currentQR);
+        res.send(`
+            <html>
+                <head>
+                    <meta http-equiv="refresh" content="5"> <!-- Atualiza a cada 5s -->
+                    <style>body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f0f2f5; margin: 0; }</style>
+                </head>
+                <body>
+                    <div style="background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); text-align: center;">
+                        <h2 style="margin-bottom: 20px; color: #333;">Escaneie para Conectar</h2>
+                        <img src="${url}" style="width: 300px; height: 300px;" />
+                        <p style="margin-top: 20px; color: #666;">A página atualiza automaticamente.</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    } else {
+        res.send(`
+            <div style="font-family: sans-serif; text-align: center; padding: 50px;">
+                <h1>⏳ Iniciando...</h1>
+                <p>Aguardando geração do QR Code. A página irá atualizar.</p>
+                <script>setTimeout(function(){ location.reload(); }, 3000);</script>
+            </div>
+        `);
+    }
 });
 
 app.listen(port, () => {
@@ -73,29 +109,27 @@ const { MessageMedia } = require('whatsapp-web.js');
 
     client.on('authenticated', () => {
         console.log('AUTENTICADO! Carregando chats...');
+        isConnected = true;
+        currentQR = null; // Limpa QR
     });
 
     client.on('qr', (qr) => {
-        console.log('QR RECEIVED', qr);
+        console.log('QR RECEIVED (Disponível na URL do App)');
+        currentQR = qr; // Atualiza variável para exibir no site
+        isConnected = false;
 
-        // Exibe no terminal
+        // Fallback: Exibe no terminal também (útil para debug local)
         qrcode.generate(qr, { small: true });
-
-        // Salva como arquivo de imagem
-        QRCodeImage.toFile('./qrcode.png', qr, (err) => {
-            if (err) console.error('Erro ao salvar imagem do QR Code:', err);
-            else console.log('>> IMAGEM DO QR CODE SALVA EM: qrcode.png <<');
-        });
-
-        console.log('Por favor, escaneie o QR Code acima ou abra a imagem qrcode.png gerada na pasta.');
     });
 
     client.on('auth_failure', msg => {
         console.error('FALHA DE AUTENTICAÇÃO', msg);
+        isConnected = false;
     });
 
     client.on('disconnected', (reason) => {
         console.log('Cliente desconectado', reason);
+        isConnected = false;
     });
 
     // Fallback: Tenta capturar o ID do grupo se receber uma mensagem de lá
@@ -149,6 +183,8 @@ const { MessageMedia } = require('whatsapp-web.js');
 
     client.on('ready', async () => {
         console.log('WhatsApp Conectado com Sucesso!');
+        isConnected = true;
+        currentQR = null;
 
         // --- CORREÇÃO CRÍTICA (MONKEY PATCH) ---
         // Força o navegador a ignorar a função sendSeen que está quebrada na versão atual do WhatsApp
@@ -171,7 +207,7 @@ const { MessageMedia } = require('whatsapp-web.js');
 
             console.log(`[INIT] Chat encontrado: "${chat.name}". Enviando mensagem de teste...`);
             // Usar chat.sendMessage é mais seguro que client.sendMessage
-            await chat.sendMessage('✅ Robô Ativo e Atualizado! (Versão Cloud/MongoDB)');
+            await chat.sendMessage('✅ Robô Ativo e Atualizado! (Versão Cloud com QR Web)');
             console.log('[INIT] Mensagem enviada com sucesso!');
 
         } catch (err) {
